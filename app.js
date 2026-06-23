@@ -5,7 +5,7 @@
 // ============================================================
 // Configuration
 // ============================================================
-const OVERPASS_URL = 'https://overpass.kumi.systems/api/interpreter';
+const OVERPASS_URL = "/api/overpass";
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 
 // Default city (Kozhikode)
