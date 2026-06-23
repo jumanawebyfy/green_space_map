@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌳 Neighbourhood Green-Space Map</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌳 Neighbourhood Green-Space Map</h1>
+            <p>Explore parks and tree density in any city</p>
+            <div class="search-box">
+                <input type="text" id="citySearch" placeholder="Search for a city..." value="Kozhikode" />
+                <button id="searchBtn">🔍 Search</button>
+            </div>
+        </header>
+
+        <div class="map-wrapper">
+            <div id="map"></div>
+            <div id="info-panel">
+                <div id="stats">
+                    <p id="cityName">📍 Loading...</p>
+                    <p id="treeCount">🌲 Loading trees...</p>
+                    <p id="parkCount">🌿 Loading parks...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Leaflet.heat plugin -->
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <!-- Application JS -->
+    <script src="app.js"></script>
+</body>
+</html>
