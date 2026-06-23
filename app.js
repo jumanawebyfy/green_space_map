@@ -2,9 +2,17 @@
 // Neighbourhood Green-Space Map - Main Application
 // ============================================================
 
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
-const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+// ============================================================
+// Configuration
+// ============================================================
+const API_BASE = window.location.hostname === 'localhost'
+    ? 'http://localhost:3000/api'
+    : 'https://your-backend.onrender.com/api';   // ← YOUR RENDER URL
 
+// Use these instead of direct Overpass/Nominatim URLs
+const NOMINATIM_URL = `${API_BASE}/geocode`;
+const OVERPASS_PARKS_URL = `${API_BASE}/overpass-parks`;
+const OVERPASS_TREES_URL = `${API_BASE}/overpass-trees`;
 // Default city
 let currentCity = 'Kozhikode';
 let currentBbox = { south: 11.10, west: 75.60, north: 11.40, east: 76.00 };
@@ -307,36 +315,21 @@ async function fetchCityData(cityName, bbox = currentBbox, signal = null) {
 // ============================================================
 // Overpass API Helpers (with timeout parameter)
 // ============================================================
-async function fetchParks(bbox, signal = null) {
+async function fetchParks(bbox, signal) {
     const { south, west, north, east } = bbox;
-    const query = `[out:json][timeout:25];way["leisure"="park"](${south},${west},${north},${east});out geom;`;
-    const url = `${OVERPASS_URL}?data=${encodeURIComponent(query)}`;
-    const options = {
-        headers: { 'User-Agent': 'GreenSpaceMap/1.0' }
-    };
-    if (signal) options.signal = signal;
-    const response = await fetch(url, options);
-    if (!response.ok) {
-        throw new Error(response.status === 504 ? '504 Gateway Timeout' : `Parks API HTTP ${response.status}`);
-    }
+    const url = `${OVERPASS_PARKS_URL}?south=${south}&west=${west}&north=${north}&east=${east}`;
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error(`Parks error: ${response.status}`);
     return response.json();
 }
 
-async function fetchTrees(bbox, signal = null) {
+async function fetchTrees(bbox, signal) {
     const { south, west, north, east } = bbox;
-    const query = `[out:json][timeout:25];node["natural"="tree"](${south},${west},${north},${east});out;`;
-    const url = `${OVERPASS_URL}?data=${encodeURIComponent(query)}`;
-    const options = {
-        headers: { 'User-Agent': 'GreenSpaceMap/1.0' }
-    };
-    if (signal) options.signal = signal;
-    const response = await fetch(url, options);
-    if (!response.ok) {
-        throw new Error(response.status === 504 ? '504 Gateway Timeout' : `Trees API HTTP ${response.status}`);
-    }
+    const url = `${OVERPASS_TREES_URL}?south=${south}&west=${west}&north=${north}&east=${east}`;
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error(`Trees error: ${response.status}`);
     return response.json();
 }
-
 // ============================================================
 // Start App
 // ============================================================
