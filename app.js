@@ -2,29 +2,20 @@
 // Neighbourhood Green-Space Map - Main Application
 // ============================================================
 
-// ============================================================
-// Configuration
-// ============================================================
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 
-// Default city (Kozhikode)
+// Default city
 let currentCity = 'Kozhikode';
 let currentBbox = { south: 11.10, west: 75.60, north: 11.40, east: 76.00 };
 let currentCenter = [11.25, 75.78];
 
-// ============================================================
-// State
-// ============================================================
 let map = null;
 let parkLayer = null;
 let heatLayer = null;
 let isSearching = false;
-let activeRequest = null; // Track active fetch requests
+let activeRequest = null;
 
-// ============================================================
-// DOM Elements
-// ============================================================
 const cityNameEl = document.getElementById('cityName');
 const treeCountEl = document.getElementById('treeCount');
 const parkCountEl = document.getElementById('parkCount');
@@ -41,13 +32,11 @@ function initMap() {
         zoomControl: true
     });
 
-    // Base tile layer (OSM)
     const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors',
         maxZoom: 19
     }).addTo(map);
 
-    // Create layers (empty initially)
     parkLayer = L.geoJSON(null, {
         style: {
             fillColor: '#27ae60',
@@ -58,13 +47,7 @@ function initMap() {
         },
         onEachFeature: function(feature, layer) {
             const name = feature.properties.name || 'Unnamed Park';
-            layer.bindPopup(`
-                <div style="min-width:120px;">
-                    <h4 style="margin:0 0 6px 0;">🌳 ${name}</h4>
-                    ${feature.properties.area ? `<p style="margin:2px 0;"><strong>Area:</strong> ${(feature.properties.area/10000).toFixed(2)} ha</p>` : ''}
-                    <p style="margin:2px 0;font-size:0.8rem;color:#888;">Click for details</p>
-                </div>
-            `);
+            layer.bindPopup(`<h4>🌳 ${name}</h4>`);
         }
     });
 
@@ -72,14 +55,9 @@ function initMap() {
         radius: 20,
         blur: 15,
         maxZoom: 17,
-        gradient: {
-            0.0: '#27ae60',
-            0.5: '#f1c40f',
-            1.0: '#e74c3c'
-        }
+        gradient: { 0.0: '#27ae60', 0.5: '#f1c40f', 1.0: '#e74c3c' }
     });
 
-    // Layer Control
     const baseMaps = { 'Street Map': osmLayer };
     const overlayMaps = {
         '🌳 Parks': parkLayer,
@@ -87,28 +65,24 @@ function initMap() {
     };
     L.control.layers(baseMaps, overlayMaps, { position: 'topright' }).addTo(map);
 
-    // Add layers to map by default
     parkLayer.addTo(map);
     heatLayer.addTo(map);
 
-    // Load initial data for default city
     fetchCityData(currentCity);
 
-    // Handle search
     searchBtn.addEventListener('click', handleSearch);
-    searchInput.addEventListener('keypress', function(e) {
+    searchInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') handleSearch();
     });
 }
 
 // ============================================================
-// Search Handler - With Request Cancellation
+// Search Handler with Auto-Retry on Timeout
 // ============================================================
 async function handleSearch() {
     const query = searchInput.value.trim();
     if (!query) return;
     if (isSearching) {
-        // If already searching, cancel the previous request
         if (activeRequest) {
             activeRequest.abort();
             activeRequest = null;
@@ -125,25 +99,26 @@ async function handleSearch() {
     treeCountEl.textContent = '🌲 Loading...';
     parkCountEl.textContent = '🌿 Loading...';
 
-    // Create abort controller for this request
     const controller = new AbortController();
     activeRequest = controller;
 
     try {
-        // Geocode city using Nominatim
+        // Geocode using Nominatim
         const url = `${NOMINATIM_URL}?q=${encodeURIComponent(query)}&format=json&limit=1&polygon_geojson=1`;
         const response = await fetch(url, {
             headers: { 'User-Agent': 'GreenSpaceMap/1.0' },
             signal: controller.signal
         });
 
-        if (!response.ok) throw new Error(`Geocoding failed: ${response.status}`);
-        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(`Geocoding HTTP ${response.status}`);
+        }
 
+        const data = await response.json();
         if (data.length === 0) {
             cityNameEl.textContent = '❌ City not found';
-            treeCountEl.textContent = '🌲 No data';
-            parkCountEl.textContent = '🌿 No data';
+            treeCountEl.textContent = '';
+            parkCountEl.textContent = '';
             alert('City not found. Please try a different name.');
             isSearching = false;
             searchBtn.disabled = false;
@@ -156,13 +131,25 @@ async function handleSearch() {
         const lat = parseFloat(result.lat);
         const lng = parseFloat(result.lon);
 
-        // Get bounding box
+        // Get bounding box – CAPPED to avoid timeout
         let bbox;
         if (result.boundingbox) {
             const [minLat, maxLat, minLon, maxLon] = result.boundingbox.map(Number);
-            bbox = { south: minLat, west: minLon, north: maxLat, east: maxLon };
+            // Cap at 0.15 degrees (~16km) to prevent timeout
+            const maxSize = 0.15;
+            const latRange = Math.min(maxLat - minLat, maxSize);
+            const lonRange = Math.min(maxLon - minLon, maxSize);
+            const centerLat = (minLat + maxLat) / 2;
+            const centerLon = (minLon + maxLon) / 2;
+            bbox = {
+                south: centerLat - latRange / 2,
+                west: centerLon - lonRange / 2,
+                north: centerLat + latRange / 2,
+                east: centerLon + lonRange / 2
+            };
         } else {
-            const delta = 0.05;
+            // Small fallback bbox (~4.5km)
+            const delta = 0.04;
             bbox = {
                 south: lat - delta,
                 west: lng - delta,
@@ -171,33 +158,33 @@ async function handleSearch() {
             };
         }
 
-        // Update current info
         currentCity = cityName;
         currentBbox = bbox;
         currentCenter = [lat, lng];
 
-        // Fly map to city center
-        map.flyTo([lat, lng], 13);
+        map.flyTo([lat, lng], 14);
 
-        // Fetch new data
-        await fetchCityData(cityName, bbox, controller.signal);
+        // Fetch data with automatic retry on timeout
+        await fetchWithRetry(cityName, bbox, controller.signal);
 
     } catch (error) {
-        // Ignore abort errors (user initiated new search)
         if (error.name === 'AbortError') {
-            console.log('⏹️ Search cancelled by user');
+            console.log('⏹️ Search cancelled');
             return;
         }
         console.error('Search error:', error);
-        cityNameEl.textContent = '❌ Error';
-        treeCountEl.textContent = '❌ Failed to load';
-        parkCountEl.textContent = '❌ Failed to load';
-        // Don't show alert for network errors, just update UI
+        let errorMsg = error.message || 'Unknown error';
         if (error.message.includes('Failed to fetch')) {
-            // Silent fail for network issues
-        } else {
-            alert('Error searching for city. Please try again.');
+            errorMsg = 'Network error – check your internet connection.';
+        } else if (error.message.includes('504')) {
+            errorMsg = 'Server timeout. Try a smaller area or search for a neighbourhood.';
+        } else if (error.message.includes('429')) {
+            errorMsg = 'Rate limited – please wait a moment and try again.';
         }
+        cityNameEl.textContent = `❌ ${errorMsg}`;
+        treeCountEl.textContent = '';
+        parkCountEl.textContent = '';
+        alert(`Error: ${errorMsg}`);
     } finally {
         isSearching = false;
         searchBtn.disabled = false;
@@ -207,48 +194,77 @@ async function handleSearch() {
 }
 
 // ============================================================
-// Fetch Parks and Trees for a Given City/Bbox
+// Fetch with Automatic Retry (shrinks bbox on timeout)
+// ============================================================
+async function fetchWithRetry(cityName, bbox, signal, attempt = 1) {
+    const maxAttempts = 3;
+    try {
+        await fetchCityData(cityName, bbox, signal);
+    } catch (error) {
+        if (attempt < maxAttempts && (error.message.includes('504') || error.message.includes('timeout'))) {
+            // Shrink bbox by 30% and retry
+            const shrink = 0.7;
+            const centerLat = (bbox.south + bbox.north) / 2;
+            const centerLon = (bbox.west + bbox.east) / 2;
+            const latHalf = ((bbox.north - bbox.south) / 2) * shrink;
+            const lonHalf = ((bbox.east - bbox.west) / 2) * shrink;
+            const smallerBbox = {
+                south: centerLat - latHalf,
+                west: centerLon - lonHalf,
+                north: centerLat + latHalf,
+                east: centerLon + lonHalf
+            };
+            console.log(`🔄 Retry ${attempt}/${maxAttempts} with smaller bbox...`);
+            cityNameEl.textContent = `📍 ${cityName} (retry ${attempt}...)`;
+            await fetchWithRetry(cityName, smallerBbox, signal, attempt + 1);
+        } else {
+            throw error;
+        }
+    }
+}
+
+// ============================================================
+// Fetch Parks & Trees with Timeout
 // ============================================================
 async function fetchCityData(cityName, bbox = currentBbox, signal = null) {
     try {
-        // Clear existing data
         parkLayer.clearLayers();
         heatLayer.setLatLngs([]);
         cityNameEl.textContent = `📍 ${cityName}`;
         treeCountEl.textContent = '🌲 Fetching...';
         parkCountEl.textContent = '🌿 Fetching...';
 
-        // Fetch parks and trees concurrently with abort support
+        // 12 second timeout
+        const timeout = (ms) => new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Request timeout')), ms)
+        );
+
         let parksData, treesData;
         try {
-            [parksData, treesData] = await Promise.all([
-                fetchParks(bbox, signal),
-                fetchTrees(bbox, signal)
+            [parksData, treesData] = await Promise.race([
+                Promise.all([
+                    fetchParks(bbox, signal),
+                    fetchTrees(bbox, signal)
+                ]),
+                timeout(12000).then(() => { throw new Error('504 Gateway Timeout'); })
             ]);
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                console.log('⏹️ Data fetch cancelled');
-                return;
-            }
-            throw error;
+        } catch (fetchError) {
+            throw new Error(fetchError.message || 'Data fetch failed');
         }
 
         // Process parks
         let parkFeatures = [];
-        if (parksData && parksData.elements && parksData.elements.length > 0) {
+        if (parksData?.elements) {
             parkFeatures = parksData.elements
                 .filter(way => way.geometry && way.geometry.length > 0)
                 .map(way => {
                     const coords = way.geometry.map(node => [node.lon, node.lat]);
-                    if (coords.length > 0) {
-                        coords.push(coords[0]); // close ring
+                    if (coords.length) {
+                        coords.push(coords[0]);
                     }
                     return {
                         type: 'Feature',
-                        geometry: {
-                            type: 'Polygon',
-                            coordinates: [coords]
-                        },
+                        geometry: { type: 'Polygon', coordinates: [coords] },
                         properties: {
                             name: way.tags?.name || 'Unnamed Park',
                             area: way.tags?.area ? parseFloat(way.tags.area) : null
@@ -258,10 +274,7 @@ async function fetchCityData(cityName, bbox = currentBbox, signal = null) {
         }
 
         if (parkFeatures.length > 0) {
-            parkLayer.addData({
-                type: 'FeatureCollection',
-                features: parkFeatures
-            });
+            parkLayer.addData({ type: 'FeatureCollection', features: parkFeatures });
             parkCountEl.textContent = `🌿 ${parkFeatures.length} parks loaded`;
         } else {
             parkCountEl.textContent = '🌿 No parks found in this area';
@@ -269,12 +282,8 @@ async function fetchCityData(cityName, bbox = currentBbox, signal = null) {
 
         // Process trees
         let points = [];
-        if (treesData && treesData.elements && treesData.elements.length > 0) {
-            points = treesData.elements.map(node => [
-                node.lat,
-                node.lon,
-                1 // intensity
-            ]);
+        if (treesData?.elements) {
+            points = treesData.elements.map(node => [node.lat, node.lon, 1]);
         }
 
         if (points.length > 0) {
@@ -287,63 +296,49 @@ async function fetchCityData(cityName, bbox = currentBbox, signal = null) {
         console.log(`✅ Loaded ${parkFeatures.length} parks, ${points.length} trees for ${cityName}`);
 
     } catch (error) {
-        if (error.name === 'AbortError') {
-            console.log('⏹️ Data fetch cancelled');
-            return;
-        }
-        console.error('Error fetching city data:', error);
-        parkCountEl.textContent = '❌ Error loading parks';
-        treeCountEl.textContent = '❌ Error loading trees';
+        if (error.name === 'AbortError') return;
+        console.error('Fetch city data error:', error);
+        parkCountEl.textContent = `❌ ${error.message}`;
+        treeCountEl.textContent = '❌ Failed';
         throw error;
     }
 }
 
 // ============================================================
-// Fetch Parks from Overpass
+// Overpass API Helpers (with timeout parameter)
 // ============================================================
 async function fetchParks(bbox, signal = null) {
     const { south, west, north, east } = bbox;
-    const query = `
-        [out:json];
-        way["leisure"="park"](${south},${west},${north},${east});
-        out geom;
-    `;
+    const query = `[out:json][timeout:25];way["leisure"="park"](${south},${west},${north},${east});out geom;`;
     const url = `${OVERPASS_URL}?data=${encodeURIComponent(query)}`;
-    
     const options = {
         headers: { 'User-Agent': 'GreenSpaceMap/1.0' }
     };
     if (signal) options.signal = signal;
-    
     const response = await fetch(url, options);
-    if (!response.ok) throw new Error(`Parks API error: ${response.status}`);
+    if (!response.ok) {
+        throw new Error(response.status === 504 ? '504 Gateway Timeout' : `Parks API HTTP ${response.status}`);
+    }
     return response.json();
 }
 
-// ============================================================
-// Fetch Trees from Overpass
-// ============================================================
 async function fetchTrees(bbox, signal = null) {
     const { south, west, north, east } = bbox;
-    const query = `
-        [out:json];
-        node["natural"="tree"](${south},${west},${north},${east});
-        out;
-    `;
+    const query = `[out:json][timeout:25];node["natural"="tree"](${south},${west},${north},${east});out;`;
     const url = `${OVERPASS_URL}?data=${encodeURIComponent(query)}`;
-    
     const options = {
         headers: { 'User-Agent': 'GreenSpaceMap/1.0' }
     };
     if (signal) options.signal = signal;
-    
     const response = await fetch(url, options);
-    if (!response.ok) throw new Error(`Trees API error: ${response.status}`);
+    if (!response.ok) {
+        throw new Error(response.status === 504 ? '504 Gateway Timeout' : `Trees API HTTP ${response.status}`);
+    }
     return response.json();
 }
 
 // ============================================================
-// Initialize App
+// Start App
 // ============================================================
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🌳 Green-Space Map initializing...');
