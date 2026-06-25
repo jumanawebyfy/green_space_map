@@ -97,9 +97,20 @@ async function geocodeCity(query, signal) {
 // ============================================================
 // Fetch Parks (via Proxy)
 // ============================================================
+// ============================================================
+// Fetch Parks (via Proxy)
+// ============================================================
 async function fetchParks(bbox, signal) {
+    // Validate bbox
+    if (!bbox || !bbox.south || !bbox.west || !bbox.north || !bbox.east) {
+        console.error('❌ Invalid bbox:', bbox);
+        throw new Error('Invalid bounding box parameters');
+    }
+    
     const { south, west, north, east } = bbox;
     const url = `${OVERPASS_PARKS_URL}?south=${south}&west=${west}&north=${north}&east=${east}`;
+    console.log('📡 Parks URL:', url);
+    
     const response = await fetch(url, { signal });
     if (!response.ok) throw new Error(`Parks error: ${response.status}`);
     return response.json();
@@ -109,13 +120,20 @@ async function fetchParks(bbox, signal) {
 // Fetch Trees (via Proxy)
 // ============================================================
 async function fetchTrees(bbox, signal) {
+    // Validate bbox
+    if (!bbox || !bbox.south || !bbox.west || !bbox.north || !bbox.east) {
+        console.error('❌ Invalid bbox:', bbox);
+        throw new Error('Invalid bounding box parameters');
+    }
+    
     const { south, west, north, east } = bbox;
     const url = `${OVERPASS_TREES_URL}?south=${south}&west=${west}&north=${north}&east=${east}`;
+    console.log('📡 Trees URL:', url);
+    
     const response = await fetch(url, { signal });
     if (!response.ok) throw new Error(`Trees error: ${response.status}`);
     return response.json();
 }
-
 // ============================================================
 // Search Handler
 // ============================================================
