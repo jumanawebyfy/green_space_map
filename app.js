@@ -7,10 +7,10 @@
 // ============================================================
 const API_BASE = window.location.hostname === 'localhost'
     ? 'http://localhost:3000/api'
-    : 'https://your-backend.onrender.com/api';   // ← YOUR RENDER URL
+    : 'https://flood-risk-checker.onrender.com/api';   // ← YOUR RENDER URL
 
 // Use these instead of direct Overpass/Nominatim URLs
-const NOMINATIM_URL = `${API_BASE}/geocode`;
+const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const OVERPASS_PARKS_URL = `${API_BASE}/overpass-parks`;
 const OVERPASS_TREES_URL = `${API_BASE}/overpass-trees`;
 // Default city
