@@ -7,12 +7,12 @@
 // ============================================================
 const API_BASE = window.location.hostname === 'localhost'
     ? 'http://localhost:3000/api'
-    : 'https://flood-risk-checker.onrender.com/api';   // ← YOUR RENDER URL
+    : 'https://flood-risk-checker.onrender.com/api';   // ✅ YOUR RENDER URL
 
-// Use these instead of direct Overpass/Nominatim URLs
-const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+const NOMINATIM_URL = `${API_BASE}/geocode`;
 const OVERPASS_PARKS_URL = `${API_BASE}/overpass-parks`;
 const OVERPASS_TREES_URL = `${API_BASE}/overpass-trees`;
+
 // Default city
 let currentCity = 'Kozhikode';
 let currentBbox = { south: 11.10, west: 75.60, north: 11.40, east: 76.00 };
@@ -85,11 +85,44 @@ function initMap() {
 }
 
 // ============================================================
-// Search Handler with Auto-Retry on Timeout
+// Geocode City (via Proxy)
+// ============================================================
+async function geocodeCity(query, signal) {
+    const url = `${NOMINATIM_URL}?q=${encodeURIComponent(query)}`;
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error(`Geocoding error: ${response.status}`);
+    return response.json();
+}
+
+// ============================================================
+// Fetch Parks (via Proxy)
+// ============================================================
+async function fetchParks(bbox, signal) {
+    const { south, west, north, east } = bbox;
+    const url = `${OVERPASS_PARKS_URL}?south=${south}&west=${west}&north=${north}&east=${east}`;
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error(`Parks error: ${response.status}`);
+    return response.json();
+}
+
+// ============================================================
+// Fetch Trees (via Proxy)
+// ============================================================
+async function fetchTrees(bbox, signal) {
+    const { south, west, north, east } = bbox;
+    const url = `${OVERPASS_TREES_URL}?south=${south}&west=${west}&north=${north}&east=${east}`;
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error(`Trees error: ${response.status}`);
+    return response.json();
+}
+
+// ============================================================
+// Search Handler
 // ============================================================
 async function handleSearch() {
     const query = searchInput.value.trim();
     if (!query) return;
+
     if (isSearching) {
         if (activeRequest) {
             activeRequest.abort();
@@ -111,19 +144,10 @@ async function handleSearch() {
     activeRequest = controller;
 
     try {
-        // Geocode using Nominatim
-        const url = `${NOMINATIM_URL}?q=${encodeURIComponent(query)}&format=json&limit=1&polygon_geojson=1`;
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'GreenSpaceMap/1.0' },
-            signal: controller.signal
-        });
+        // Geocode via proxy
+        const geoData = await geocodeCity(query, controller.signal);
 
-        if (!response.ok) {
-            throw new Error(`Geocoding HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (data.length === 0) {
+        if (geoData.length === 0) {
             cityNameEl.textContent = '❌ City not found';
             treeCountEl.textContent = '';
             parkCountEl.textContent = '';
@@ -134,16 +158,15 @@ async function handleSearch() {
             return;
         }
 
-        const result = data[0];
+        const result = geoData[0];
         const cityName = result.display_name.split(',')[0];
         const lat = parseFloat(result.lat);
         const lng = parseFloat(result.lon);
 
-        // Get bounding box – CAPPED to avoid timeout
+        // Get bounding box with cap
         let bbox;
         if (result.boundingbox) {
             const [minLat, maxLat, minLon, maxLon] = result.boundingbox.map(Number);
-            // Cap at 0.15 degrees (~16km) to prevent timeout
             const maxSize = 0.15;
             const latRange = Math.min(maxLat - minLat, maxSize);
             const lonRange = Math.min(maxLon - minLon, maxSize);
@@ -156,7 +179,6 @@ async function handleSearch() {
                 east: centerLon + lonRange / 2
             };
         } else {
-            // Small fallback bbox (~4.5km)
             const delta = 0.04;
             bbox = {
                 south: lat - delta,
@@ -172,8 +194,8 @@ async function handleSearch() {
 
         map.flyTo([lat, lng], 14);
 
-        // Fetch data with automatic retry on timeout
-        await fetchWithRetry(cityName, bbox, controller.signal);
+        // Fetch parks and trees via proxy
+        await fetchCityData(cityName, bbox, controller.signal);
 
     } catch (error) {
         if (error.name === 'AbortError') {
@@ -182,12 +204,10 @@ async function handleSearch() {
         }
         console.error('Search error:', error);
         let errorMsg = error.message || 'Unknown error';
-        if (error.message.includes('Failed to fetch')) {
-            errorMsg = 'Network error – check your internet connection.';
-        } else if (error.message.includes('504')) {
-            errorMsg = 'Server timeout. Try a smaller area or search for a neighbourhood.';
-        } else if (error.message.includes('429')) {
-            errorMsg = 'Rate limited – please wait a moment and try again.';
+        if (error.message.includes('timeout') || error.message.includes('504')) {
+            errorMsg = 'Request timed out. Try a smaller area.';
+        } else if (error.message.includes('Failed to fetch')) {
+            errorMsg = 'Network error – check your connection.';
         }
         cityNameEl.textContent = `❌ ${errorMsg}`;
         treeCountEl.textContent = '';
@@ -202,37 +222,7 @@ async function handleSearch() {
 }
 
 // ============================================================
-// Fetch with Automatic Retry (shrinks bbox on timeout)
-// ============================================================
-async function fetchWithRetry(cityName, bbox, signal, attempt = 1) {
-    const maxAttempts = 3;
-    try {
-        await fetchCityData(cityName, bbox, signal);
-    } catch (error) {
-        if (attempt < maxAttempts && (error.message.includes('504') || error.message.includes('timeout'))) {
-            // Shrink bbox by 30% and retry
-            const shrink = 0.7;
-            const centerLat = (bbox.south + bbox.north) / 2;
-            const centerLon = (bbox.west + bbox.east) / 2;
-            const latHalf = ((bbox.north - bbox.south) / 2) * shrink;
-            const lonHalf = ((bbox.east - bbox.west) / 2) * shrink;
-            const smallerBbox = {
-                south: centerLat - latHalf,
-                west: centerLon - lonHalf,
-                north: centerLat + latHalf,
-                east: centerLon + lonHalf
-            };
-            console.log(`🔄 Retry ${attempt}/${maxAttempts} with smaller bbox...`);
-            cityNameEl.textContent = `📍 ${cityName} (retry ${attempt}...)`;
-            await fetchWithRetry(cityName, smallerBbox, signal, attempt + 1);
-        } else {
-            throw error;
-        }
-    }
-}
-
-// ============================================================
-// Fetch Parks & Trees with Timeout
+// Fetch City Data (Parks + Trees)
 // ============================================================
 async function fetchCityData(cityName, bbox = currentBbox, signal = null) {
     try {
@@ -242,23 +232,10 @@ async function fetchCityData(cityName, bbox = currentBbox, signal = null) {
         treeCountEl.textContent = '🌲 Fetching...';
         parkCountEl.textContent = '🌿 Fetching...';
 
-        // 12 second timeout
-        const timeout = (ms) => new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Request timeout')), ms)
-        );
-
-        let parksData, treesData;
-        try {
-            [parksData, treesData] = await Promise.race([
-                Promise.all([
-                    fetchParks(bbox, signal),
-                    fetchTrees(bbox, signal)
-                ]),
-                timeout(12000).then(() => { throw new Error('504 Gateway Timeout'); })
-            ]);
-        } catch (fetchError) {
-            throw new Error(fetchError.message || 'Data fetch failed');
-        }
+        const [parksData, treesData] = await Promise.all([
+            fetchParks(bbox, signal),
+            fetchTrees(bbox, signal)
+        ]);
 
         // Process parks
         let parkFeatures = [];
@@ -312,24 +289,6 @@ async function fetchCityData(cityName, bbox = currentBbox, signal = null) {
     }
 }
 
-// ============================================================
-// Overpass API Helpers (with timeout parameter)
-// ============================================================
-async function fetchParks(bbox, signal) {
-    const { south, west, north, east } = bbox;
-    const url = `${OVERPASS_PARKS_URL}?south=${south}&west=${west}&north=${north}&east=${east}`;
-    const response = await fetch(url, { signal });
-    if (!response.ok) throw new Error(`Parks error: ${response.status}`);
-    return response.json();
-}
-
-async function fetchTrees(bbox, signal) {
-    const { south, west, north, east } = bbox;
-    const url = `${OVERPASS_TREES_URL}?south=${south}&west=${west}&north=${north}&east=${east}`;
-    const response = await fetch(url, { signal });
-    if (!response.ok) throw new Error(`Trees error: ${response.status}`);
-    return response.json();
-}
 // ============================================================
 // Start App
 // ============================================================
